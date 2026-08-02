@@ -15,3 +15,7 @@ azure-cloudshield-portfolio/
 │       ├── rg-cloudshield.png            # Resource Group layout
 │       └── Masked.png                    # Dynamic Data Masking verification
 └── README.md
+
+
+
+Pending...(More changes coming)
