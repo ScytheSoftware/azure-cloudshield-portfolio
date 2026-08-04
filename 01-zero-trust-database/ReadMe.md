@@ -9,7 +9,7 @@ This module demonstrates an end-to-end **Zero-Trust Data Architecture** in Azure
 
 * **Network Isolation:** Public network access is disabled (`Disabled`), forcing all connections through an internal Virtual Network (VNet) via Azure Private Link.
 * **Control-Plane Security:** Entra ID authentication and Azure RBAC manage administrative and security permissions without hardcoded SQL credentials.
-* **Data-Plane Protection:** Dynamic Data Masking (DDM) obfuscates sensitive attributes (e.g., email addresses) dynamically for low-privileged users while preserving full visibility for authorized security managers.
+* **Data-Plane Protection:** Dynamic Data Masking (DDM) obfuscates sensitive attributes (e.g., email addresses and credit cards) dynamically for low-privileged users while preserving full visibility for authorized security managers.
 
 ---
 
@@ -18,12 +18,14 @@ This module demonstrates an end-to-end **Zero-Trust Data Architecture** in Azure
 | File / Asset Name | Purpose |
 | :--- | :--- |
 | `queries/01_create_customers.sql` | Builds the `Customers` schema, inserts seed data, and configures DDM functions. |
-| `queries/02_test_low_privileged_user.sql` | Executes context-switching (`EXECUTE AS USER`) to verify masked outputs for low-privileged users vs. admins. |
+| `queries/02_test_low_privileged_user.sql` | Creates a low-privileged test user (`TestUser`), grants read rights, and executes context-switching (`EXECUTE AS USER`) to verify masked outputs. |
 | `images/rg-cloudshield.png` | Overview screenshot of the deployed Azure resources inside the target Resource Group. |
 | `images/public_access_disabled.png` | Visual verification showing public network access disabled on SQL Server. |
 | `images/private_endpoint_resource.png` | Screenshot of Private Endpoint target resource configuration. |
 | `images/Inbound_rules.png` | Screenshot of configured Network Security Group (NSG) inbound security rules. |
 | `images/Role_assigned_SQLSec.png` | Access Control (IAM) role assignment proof for `SQL Security Manager`. |
+| `images/database_navigate.png` | Screenshot showing navigation to Dynamic Data Masking under Security in the SQL Database menu. |
+| `images/add_masking.png` | Screenshot showing configuration of a custom masking rule in the Azure Portal. |
 | `images/db_login_blocked.png` | Verification screenshot showing connection attempt blocked over public network. |
 | `images/Masked.png` | Verification screenshot confirming dynamic data masking during query execution. |
 
@@ -50,7 +52,7 @@ This module demonstrates an end-to-end **Zero-Trust Data Architecture** in Azure
 ---
 
 ### Step 3: Azure SQL Server Deployment & Public Lockdown
-1. Provision an **Azure SQL Server** (e.g., `sqlserver-cloudshield-dw`) and an **Azure SQL Database**.
+1. Provision an **Azure SQL Server** (e.g., `sqlserver-cloudshield-dw`) and an **Azure SQL Database** (`sqldb-cloudshield-prod`).
 2. Set **Authentication** to **Microsoft Entra ID authentication only** (or *SQL + Entra ID*).
 3. Once deployed, open your SQL Server and navigate to the **Networking** blade:
    * Set **Public network access** to **`Disabled`**.
@@ -98,11 +100,70 @@ This module demonstrates an end-to-end **Zero-Trust Data Architecture** in Azure
 
 ---
 
-### Step 7: Data-Plane Security & Dynamic Data Masking (DDM)
-1. Connect to your database via Query Editor or SQL Server Management Studio (SSMS).
-2. Execute **`queries/01_create_customers.sql`** to create the customer table and apply built-in masking functions:
+### Step 7: Database Creation & Seed Data Insertion (`01_create_customers.sql`)
+
+Connect to your database via Query Editor in the Azure Portal or SQL Server Management Studio (SSMS). Run the following script to create the `Customers` table, insert seed records, and verify the raw unmasked data:
 
 ```sql
--- Apply Email Masking Function
+-- Create Customer Table
+CREATE TABLE Customers (
+    CustomerID INT IDENTITY(1,1) PRIMARY KEY,
+    FullName VARCHAR(100),
+    Email VARCHAR(100),
+    CreditCard VARCHAR(19)
+);
+
+-- Insert Test Data
+INSERT INTO Customers (FullName, Email, CreditCard)
+VALUES
+('Alex Mercer', 'alex.mercer@example.com', '4532-1122-3344-5566'),
+('Jordan Reed', 'jordan.reed@example.com', '5120-9988-7766-5544');
+
+-- Verify Data (As Admin)
+SELECT * FROM Customers;
+```
+
+### Step 8: Dynamic Data Masking (DDM) Configuration
+
+After creating the table and populating test data, sensitive information (such as credit card numbers or email addresses) can be masked either through the SQL Database resource in the Azure Portal or via T-SQL commands[cite: 3].
+
+#### Option A: Via Azure SQL Database Resource (Portal GUI)
+1. Open your **Azure SQL Database** resource (`sqldb-cloudshield-prod`) in the Azure Portal[cite: 3].
+2. In the left navigation menu under **Security**, click **Dynamic Data Masking**[cite: 3].
+
+![Navigate to Dynamic Data Masking](images/database_navigate.png)
+
+3. Click **+ Add mask**[cite: 3].
+4. Select the target **Schema** (`dbo`), **Table** (`Customers`), and **Column** (e.g., `CreditCard` or `Email`)[cite: 3].
+5. Select your desired **Masking field format** (e.g., *Credit card value*, *Email*, or *Custom string*) and save[cite: 3].
+
+![Add Masking Rule Configuration](images/add_masking.png)
+
+#### Option B: Via T-SQL Commands
+Alternatively, execute the following SQL statements directly to apply masking rules:
+
+```sql
+-- Apply Email and Credit Card Masking Functions
 ALTER TABLE Customers 
 ALTER COLUMN Email ADD MASKED WITH (FUNCTION = 'email()');
+
+ALTER TABLE Customers 
+ALTER COLUMN CreditCard ADD MASKED WITH (FUNCTION = 'partial(0, "XXXX-XXXX-XXXX-", 4)');
+```
+
+### Step 9: Test Access & Verify Masking via Low-Privileged User
+
+Create an unprivileged user without login rights, grant explicit 'SELECT' permission, and test context switching to confirm that the data is obfuscated for non-admin accounts:
+
+```sql
+-- 1. Create a low-privileged test user without admin rights
+CREATE USER TestUser WITHOUT LOGIN;
+GRANT SELECT ON Customers TO TestUser;
+
+-- 2. Run the query AS the test user to see the mask
+EXECUTE AS USER = 'TestUser';
+SELECT * FROM Customers;
+
+-- 3. Switch back to your admin account
+REVERT;
+```
