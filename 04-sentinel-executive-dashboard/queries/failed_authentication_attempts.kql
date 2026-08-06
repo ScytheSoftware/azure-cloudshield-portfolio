@@ -1,0 +1,3 @@
+Event
+| where EventID == 4625
+| summarize AttackCount = count() by bin(TimeGenerated, 1h)

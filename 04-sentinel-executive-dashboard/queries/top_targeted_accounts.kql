@@ -1,0 +1,5 @@
+Event
+| where EventID == 4625
+| where isnotempty(UserName) and UserName != "N/A"
+| summarize Attempts = count() by UserName
+| top 5 by Attempts desc
